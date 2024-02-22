@@ -9,9 +9,7 @@ import LoadingComponent from "./LoadingComponent";
 
 function App() {
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [selectedActivity, setSelectedActivity] = useState<
-    Activity | undefined
-  >(undefined);
+  const [selectedActivity, setSelectedActivity] = useState<Activity | undefined>(undefined);
   const [editMode, setEditMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -48,11 +46,7 @@ function App() {
   function handleCreateOrEditActivity(activity: Activity) {
     setSubmitting(true);
     if (activity.id) {
-      agent.Activities.update(activity).then(() => {
-        setActivities([
-          ...activities.filter((x) => x.id !== activity.id),
-          activity,
-        ]);
+      agent.Activities.update(activity).then(() => {setActivities([...activities.filter((x) => x.id !== activity.id),activity]);
         setSelectedActivity(activity);
         setEditMode(false);
         setSubmitting(false);
