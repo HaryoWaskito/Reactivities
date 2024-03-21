@@ -12,7 +12,7 @@ export class Profile implements IProfile {
     constructor(user: User) {
         this.username = user.userName;
         this.displayName = user.displayName;
-        this.image = user.image;
+        this.image = user.image;        
     }
 
     username: string;

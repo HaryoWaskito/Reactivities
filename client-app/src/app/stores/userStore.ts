@@ -46,11 +46,15 @@ export default class UserStore {
     }
   };
 
-  setImage = (image : string) => {
-    if(this.user) this.user.image = image;
-  }
+  setImage = (image: string) => {
+    if (this.user) this.user.image = image;
+  };
+
+  setDisplayName = (name: string) => {
+    if (this.user) this.user.displayName = name;
+  };
 
   deleteImage = () => {
-    if(this.user) this.user.image = ''
-  }
+    if (this.user) this.user.image = "";
+  };
 }
