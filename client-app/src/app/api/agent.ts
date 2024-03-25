@@ -16,11 +16,11 @@ axios.defaults.baseURL = "http://localhost:5000/api";
 
 const responseBody = <T>(response: AxiosResponse<T>) => response.data;
 
-axios.interceptors.request.use(config => {
+axios.interceptors.request.use((config) => {
   const token = store.commonStore.token;
-  if (token && config.headers) config.headers.Authorization = `Bearer ${token}`
+  if (token && config.headers) config.headers.Authorization = `Bearer ${token}`;
   return config;
-})
+});
 
 axios.interceptors.response.use(
   async (response) => {
@@ -31,7 +31,10 @@ axios.interceptors.response.use(
     const { data, status, config } = error.response as AxiosResponse;
     switch (status) {
       case 400:
-        if (config.method === "get" && Object.prototype.hasOwnProperty.call(data.errors, 'id')) {
+        if (
+          config.method === "get" &&
+          Object.prototype.hasOwnProperty.call(data.errors, "id")
+        ) {
           router.navigate("/not-found");
         }
         if (data.errors) {
@@ -76,36 +79,42 @@ const requests = {
 const Activities = {
   list: () => requests.get<Activity[]>("/activities"),
   details: (id: string) => requests.get<Activity>(`/activities/${id}`),
-  create: (activity: ActivityFormValues) => requests.post<void>("/activities", activity),
-  update: (activity: ActivityFormValues) => requests.put<void>(`/activities/${activity.id}`, activity),
+  create: (activity: ActivityFormValues) =>
+    requests.post<void>("/activities", activity),
+  update: (activity: ActivityFormValues) =>
+    requests.put<void>(`/activities/${activity.id}`, activity),
   delete: (id: string) => requests.delete<void>(`/activities/${id}`),
-  attend: (id: string) => requests.post<void>(`/activities/${id}/attend`,{})
+  attend: (id: string) => requests.post<void>(`/activities/${id}/attend`, {}),
 };
 
 const Account = {
-  current: () => requests.get<User>('/account'),
-  login: (user: UserFormValues) => requests.post<User>('/account/login', user),
-  register: (user: UserFormValues) => requests.post<User>('/account/register', user)
-}
+  current: () => requests.get<User>("/account"),
+  login: (user: UserFormValues) => requests.post<User>("/account/login", user),
+  register: (user: UserFormValues) =>
+    requests.post<User>("/account/register", user),
+};
 
 const Profiles = {
   get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
   uploadPhoto: (file: Blob) => {
     const formData = new FormData();
-    formData.append('File', file);
-    return axios.post<Photo>('photos', formData, {
-      headers: {'Content-Type' : 'multipart/form-data'}
-    })
+    formData.append("File", file);
+    return axios.post<Photo>("photos", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
-  setMainPhoto: (id: string) => requests.post(`/photo/${id}/setMain`, {}),
+  setMainPhoto: (id: string) => requests.post(`/photos/${id}/setMain`, {}),
   deletePhoto: (id: string) => requests.delete(`/photos/${id}`),
-  updateProfile: (profile: Partial<Profile>) => requests.put<Profile>(`/profiles/`, profile)
-}
+  updateProfile: (profile: Partial<Profile>) =>
+    requests.put<Profile>(`/profiles/`, profile),
+  updateFollowing: (username : string) => requests.post(`/follow/${username}`, {}),
+  listFollowing: (username: string, predicate: string) => requests.get<Profile[]>(`/follow/${username}?predicate=${predicate}`)
+};
 
 const agent = {
   Activities,
   Account,
-  Profiles
+  Profiles,
 };
 
 export default agent;

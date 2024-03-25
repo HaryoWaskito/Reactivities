@@ -15,7 +15,7 @@ export default function ActivityListItem({ activity }: Props) {
         {activity.isCancelled && (
           <Label
             attached="top"
-            jcolor="red"
+            color="red"
             content="Cancelled"
             style={{ textAlign: "center" }}
           />
@@ -34,7 +34,10 @@ export default function ActivityListItem({ activity }: Props) {
                 {activity.title}
               </Item.Header>
               <Item.Description>
-                Hosted by <Link to={`/profiles/${activity.hostUsername}`}>{activity.host?.displayName}</Link> 
+                Hosted by{" "}
+                <Link to={`/profiles/${activity.hostUsername}`}>
+                  {activity.host?.displayName}
+                </Link>
               </Item.Description>
               {activity.isHost && (
                 <Item.Description>
