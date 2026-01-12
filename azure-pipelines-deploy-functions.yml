@@ -1,0 +1,74 @@
+parameters:
+  - name: subscriptionId
+  - name: subscriptionName
+  - name: appResourceName
+  - name: environment
+  - name: appSettings
+  - name: linuxFxVersion
+  - name: sqlserver
+  - name: dbname
+  - name: sqluser
+  - name: sqlpass
+  - name: appFuncDomainExt
+
+steps:
+  - task: AzureCLI@2
+    displayName: Start staging slot
+    continueOnError: true
+    inputs:
+      azureSubscription: ${{ parameters.subscriptionName }}
+      scriptLocation: 'inlineScript'
+      scriptType: 'pscore'
+      inlineScript: "az webapp start --resource-group '${{ parameters.environment }}${{ parameters.appResourceName }}' --name '${{ parameters.environment }}${{ parameters.appResourceName }}Fa01' --slot 'staging'"
+  - task: AzureFunctionApp@1
+    displayName: Deploy function app
+    inputs:
+      azureSubscription: ${{ parameters.subscriptionName }}      
+      appType: "functionAppLinux"
+      appName: "${{ parameters.environment }}${{ parameters.appResourceName }}Fa01"
+      deployToSlotOrASE: true
+      slotName: staging
+      package: "$(Pipeline.Workspace)/**/*Functions.zip"
+      deploymentMethod: "runFromPackage"
+      configurationStrings: "-linuxFxVersion: ${{ parameters.linuxFxVersion }}"
+      appSettings: ${{ parameters.appSettings }}
+  - task: SqlDacpacDeploymentOnMachineGroup@0
+    displayName: 'Deploy using : sqlQuery'
+    inputs:
+      TaskType: sqlQuery
+      SqlFile: '$(Pipeline.Workspace)/**/*migrations.sql'
+      ServerName: ${{ parameters.sqlserver }}
+      DatabaseName: ${{ parameters.dbname }}
+      AuthScheme: sqlServerAuthentication
+      SqlUsername: ${{ parameters.sqluser }}
+      SqlPassword: ${{ parameters.sqlpass }}
+      AdditionalArgumentsSql: -ConnectionTimeout 0 -QueryTimeout 0
+  - task: PowerShell@2
+    displayName: 'Wait for endpoint to respond'
+    inputs:
+      targetType: 'inline'
+      script: | 
+                Do {
+                  try {
+                    $response = Invoke-RestMethod -Uri 'https://${{ parameters.environment }}${{ parameters.appResourceName }}Fa01-staging${{ parameters.appFuncDomainExt }}.azurewebsites.net/api/health' -TimeoutSec 5
+                  } catch {}
+                  Start-Sleep -Seconds 2
+                } 
+                while (-not $response)
+      pwsh: true
+  - task: AzureAppServiceManage@0
+    displayName: 'Swap Staging to production'
+    inputs:
+      azureSubscription: ${{ parameters.subscriptionName }}
+      Action: 'Swap Slots'
+      WebAppName: "${{ parameters.environment }}${{ parameters.appResourceName }}Fa01"
+      ResourceGroupName: "${{ parameters.environment }}${{parameters.appResourceName}}"
+      SourceSlot: staging
+  - task: AzureCLI@2
+    displayName: Stop staging slot
+    continueOnError: true
+    inputs:
+      azureSubscription: ${{ parameters.subscriptionName }}
+      scriptLocation: 'inlineScript'
+      scriptType: 'pscore'
+      inlineScript: "az webapp stop --resource-group '${{ parameters.environment }}${{ parameters.appResourceName }}' --name '${{ parameters.environment }}${{ parameters.appResourceName }}Fa01' --slot 'staging'"

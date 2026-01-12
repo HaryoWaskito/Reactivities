@@ -1,0 +1,186 @@
+# ASP.NET
+# Build and test ASP.NET projects.
+# Add steps that publish symbols, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/aspnet/build-aspnet-4
+
+name: $(Build.Repository.Name) $(GitVersion.FullSemVer)
+
+variables:
+ - name: appResourceName
+   readonly: true
+   value: 'nrgweuocpi'
+
+resources:
+- repo: self
+  clean: true
+
+trigger:
+- main
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  - stage: build_and_test
+    displayName: Build and test
+    jobs:
+      - job: Build
+        steps:
+          - task: gitversion/setup@3
+            displayName: GitVersion Pick tool version
+            inputs:
+              versionSpec: '5.x'
+              updateAssemblyInfo: true
+          - task: gitversion/execute@3
+            displayName: GitVersion Determine version
+            inputs:
+              useConfigFile: true
+              configFilePath: GitVersion.yml
+              updateAssemblyInfo: true
+          - task: UseDotNet@2
+            displayName: 'Install .NET 10 SDK'
+            inputs:
+              packageType: 'sdk'
+              version: '10.0.x'
+              performMultiLevelLookup: true
+          - task: DotNetCoreCLI@2
+            displayName: Install EF Tool
+            inputs:
+              command: custom
+              custom: 'tool '
+              arguments: install --global dotnet-ef --version 10.0.0
+          - task: NuGetAuthenticate@1
+            displayName: 'NuGet Authenticate'
+          - task: DotNetCoreCLI@2
+            displayName: Restore nuget packages
+            inputs:
+              command: 'restore'
+              projects: '**/*.sln'
+              feedsToUse: 'config'
+              nugetConfigPath: 'NuGet.config'
+          - task: SonarCloudPrepare@3
+            displayName: 'Prepare analysis configuration'
+            inputs:
+              SonarCloud: 'SonarCloud'
+              organization: 'nrg2050'              
+              projectKey: 'NRG2050_Cpo.Ocpi'
+              projectName: 'Cpo.Ocpi'
+              extraProperties: |                
+                sonar.cs.opencover.reportsPaths="$(Build.SourcesDirectory)/coverage/coverage.opencover.xml"
+                sonar.cs.vstest.reportsPaths="$(Agent.TempDirectory)/*.trx"      
+                sonar.exclusions=**/obj/**,**/*.dll,**/Migrations/*,**/wwwroot/**,**/tests/**
+          - task: DotNetCoreCLI@2
+            displayName: Build solution
+            inputs:
+              command: 'build'
+              projects: '**/*.sln'
+              arguments: '/p:Configuration=Release /p:AssemblyVersion=$(GitVersion.MajorMinorPatch) /p:Version=$(GitVersion.SemVer) --no-restore'
+          - task: DotNetCoreCLI@2
+            displayName: Run tests
+            inputs:
+              command: 'test'
+              projects: '**/*.Tests.csproj'
+              arguments: '--no-restore --logger trx /p:CollectCoverage=true /p:CoverletOutputFormat=opencover%2cjson /p:CoverletOutput=$(Build.SourcesDirectory)/coverage/ /p:MergeWith=$(Build.SourcesDirectory)/coverage/coverage.json -m:1'
+          - task: SonarCloudAnalyze@3
+            displayName: 'Run SonarCloud analysis'
+          - task: DotNetCoreCLI@2
+            inputs:
+              command: pack              
+              packagesToPack: '**/Cpo.Ocpi.Contracts.csproj'
+              packDirectory: '$(Build.ArtifactStagingDirectory)'
+              versioningScheme: byEnvVar
+              versionEnvVar: 'GitVersion.NuGetVersion'              
+              configuration: 'Release' 
+          - task: NuGetCommand@2
+            displayName: 'NuGet push'
+            inputs:
+              command: push
+              publishVstsFeed: 'BlueMarble CPO/BlueMarbleSoftware'
+              allowPackageConflicts: true
+          - task: SonarCloudPublish@3
+            displayName: 'Publish results on build summary'
+          - script: 'dotnet tool install --global dotnet-reportgenerator-globaltool'  
+            displayName: 'Install ReportGenerator tool'  
+          - script: 'reportgenerator -reports:$(Build.SourcesDirectory)/coverage/coverage.opencover.xml -targetdir:$(Build.SourcesDirectory)/coverlet/reports -reporttypes:"Cobertura"'
+            displayName: 'Create reports'
+          - task: DotNetCoreCLI@2
+            displayName: Create SQL Scripts
+            inputs:
+              command: custom
+              custom:  'ef'
+              arguments: migrations script --output $(Build.ArtifactStagingDirectory)/migrations/migrations.sql --idempotent --project $(Build.SourcesDirectory)\Repository\Repository.csproj --context OcpiContext -s $(Build.SourcesDirectory)\Cpo.Ocpi.Functions\Cpo.Ocpi.Functions.csproj
+          - task: DotNetCoreCLI@2
+            displayName: Publish zip
+            inputs:
+              command: 'publish'
+              publishWebProjects: false
+              projects: '**/Cpo.Ocpi.Functions.csproj'
+              arguments: '-o $(Build.ArtifactStagingDirectory)'
+              modifyOutputPath: true
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)'
+              artifact: 'package'
+              publishLocation: 'pipeline'
+          - task: PublishCodeCoverageResults@2  
+            displayName: 'Publish code coverage'  
+            inputs:
+              summaryFileLocation: '$(Build.SourcesDirectory)/coverlet/reports/Cobertura.xml' 
+  - stage: deploy_to_azure_development_test
+    displayName: 'Deploy Development'
+    dependsOn: build_and_test
+    condition: and(succeeded(), or(contains(variables['build.sourceBranch'], 'feature/'), eq(variables['build.sourceBranch'], 'refs/heads/main')))
+    jobs:      
+      - deployment: azure_deploy_functionapp_development
+        displayName: Deploy Functions
+        environment: Development        
+        workspace:
+          clean: all
+        variables:
+        - group: deployment-ocpi
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: azure-pipelines-deploy-functions.yml
+                  parameters:
+                    subscriptionId: '$(test-subscriptionId)'
+                    subscriptionName: 'NRG2050 default'
+                    environment: '$(test-environment)'
+                    appResourceName: '$(appResourceName)'
+                    appSettings: '-PostmarkSettings__ServerApiToken "$(PostmarkSettings_ServerApiToken)" -PostmarkSettings__FromEmail "$(PostmarkSettings_FromEmail)" -PostmarkSettings__ToEmailOfFailure "$(PostmarkSettings_ToEmailOfFailure)" -OcpiOptions__OcpiMaxLimit "$(OcpiMaxLimit)" -OcpiOptions__OcpiVersionURL "$(OcpiVersionURL)" -OcpiSqldb "$(dbconnection)" -CpoServicebus "$(CpoServicebus)" -OcppServicebus "$(OcppServicebus)" -FUNCTIONS_WORKER_RUNTIME "dotnet-isolated" -InternalApiHttp "$(InternalApiHttp)" -InternalApiHttpKey "$(InternalApiHttpKey)" -OcpiStorageTable "$(OcpiStorageTable)"'
+                    linuxFxVersion: 'DOTNET-ISOLATED|10.0'
+                    sqlserver: '$(SQLserver)'
+                    dbname: '$(SQLDBName)'
+                    sqluser: '$(SQLUser)'
+                    sqlpass: '$(SQLPassword)'
+                    appFuncDomainExt: '-asfdbuetd3b2gxc4.westeurope-01'
+  - stage: deploy_to_azure_development_prod
+    displayName: 'Deploy Production'
+    dependsOn: deploy_to_azure_development_test
+    condition: and(succeeded(), or(contains(variables['build.sourceBranch'], 'feature/'), eq(variables['build.sourceBranch'], 'refs/heads/main')))
+    jobs:      
+      - deployment: azure_deploy_functionapp_development
+        displayName: Deploy Functions
+        environment: Development        
+        workspace:
+          clean: all
+        variables:
+        - group: deployment-ocpi-prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: azure-pipelines-deploy-functions.yml
+                  parameters:
+                    subscriptionId: '$(subscriptionId)'
+                    subscriptionName: 'NRG2050 default'
+                    environment: '$(environment)'
+                    appResourceName: '$(appResourceName)'
+                    appSettings: '-PostmarkSettings__ServerApiToken "$(PostmarkSettings_ServerApiToken)" -PostmarkSettings__FromEmail "$(PostmarkSettings_FromEmail)" -PostmarkSettings__ToEmailOfFailure "$(PostmarkSettings_ToEmailOfFailure)" -OcpiOptions__OcpiMaxLimit "$(OcpiMaxLimit)" -OcpiOptions__OcpiVersionURL "$(OcpiVersionURL)" -OcpiSqldb "$(ocpi-dbconnection)" -CpoServicebus "$(CpoServicebus)" -OcppServicebus "$(OcppServicebus)" -FUNCTIONS_WORKER_RUNTIME "dotnet-isolated" -InternalApiHttp "$(InternalApiHttp)" -InternalApiHttpKey "$(InternalApiHttpKey)" -OcpiStorageTable "$(OcpiStorageTable)"'
+                    linuxFxVersion: 'DOTNET-ISOLATED|10.0'
+                    sqlserver: '$(SQLserver)'
+                    dbname: '$(SQLDBName)'
+                    sqluser: '$(SQLUser)'
+                    sqlpass: '$(SQLPassword)'
+                    appFuncDomainExt: ''
